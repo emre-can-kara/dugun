@@ -104,28 +104,34 @@ export default function App() {
     clearInterval(animationInterval);
     
     try {
-      // Call Groq API to select date and find historical event
-      const groqApiKey = import.meta.env.VITE_GROQ_API_KEY;
+      const openaiApiKey = import.meta.env.VITE_OPENAI_API_KEY;
       
-      if (!groqApiKey) {
-        throw new Error('Groq API Key bulunamadı. Lütfen .env dosyasında VITE_GROQ_API_KEY ayarlayınız.');
+      if (!openaiApiKey || openaiApiKey.includes('your_')) {
+        setIsLoading(false);
+        alert('❌ API Key eksik! .env.local dosyasında VITE_OPENAI_API_KEY ayarlayın');
+        return;
       }
 
-      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${groqApiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'mixtral-8x7b-32768',
-          messages: [{
-            role: 'user',
-            content: `Sen bir düğün tarihi danışmanısın. Aşağıdaki tarihlerden birini seç ve o tarihin gün-ay kombinasyonunda (yıl önemli değil) geçmişte yaşanmış mutlu, olumlu bir tarihi olayı bul. Tarihi olaylar gerçek olmalı.
+      console.log('OpenAI API çağrısı başlatılıyor...');
+
+      const response = await fetch(
+        'https://api.openai.com/v1/chat/completions',
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${openaiApiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'gpt-3.5-turbo',
+            messages: [
+              {
+                role: 'user',
+                content: `Sen bir düğün tarihi danışmanısın. Aşağıdaki tarihlerden birini seç ve o tarihin gün-ay kombinasyonunda (yıl önemli değil) geçmişte yaşanmış mutlu, olumlu bir tarihi olayı bul. Tarihi olaylar gerçek olmalı.
 
 İzin verilen olay kategorileri: ${selectedCategories.join(', ')}
 
-SADECE bu kategorilerden birine ait olaylar seç. Eğer kullanıcı sporu hariç tuttuysa, spor olayı seçme.
+SADECE bu kategorilerden birine ait olaylar seç.
 
 Mevcut tarihler:
 ${availableDates.slice(0, 10).map((d, i) => `${i + 1}. ${formatDate(d)}`).join('\n')}
@@ -136,17 +142,40 @@ SADECE şu JSON formatında cevap ver:
   "event": "<o gün-ay'da geçmişte yaşanmış mutlu olay (Türkçe)>",
   "year": <olayın gerçekleştiği yıl>,
   "category": "<olayın kategorisi>"
-}`
-          }],
-          max_tokens: 1000,
-          temperature: 0.7
-        })
-      });
+}`,
+              },
+            ],
+            temperature: 0.7,
+            max_tokens: 500,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        console.error('OpenAI API Error:', errorData);
+        
+        const errorMsg = errorData.error?.message || response.statusText;
+        
+        if (errorMsg.includes('insufficient_quota') || errorMsg.includes('rate_limit')) {
+          setIsLoading(false);
+          alert('❌ API Quota Aşıldı! Hesabınız için yeterli kredi yok.');
+          return;
+        }
+        if (errorMsg.includes('invalid') || errorMsg.includes('Incorrect API key')) {
+          setIsLoading(false);
+          alert('❌ API Key Geçersiz! Lütfen doğru keyi kullanın: https://platform.openai.com/api-keys');
+          return;
+        }
+        
+        throw new Error(errorMsg);
+      }
 
       const data = await response.json();
-      const aiResponse = data.choices[0]?.message?.content || '';
+      const aiResponse = data.choices?.[0]?.message?.content || '';
       
-      // Parse JSON response
+      console.log('AI Yanıtı:', aiResponse);
+      
       const jsonMatch = aiResponse.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const result = JSON.parse(jsonMatch[0]);
@@ -159,22 +188,16 @@ SADECE şu JSON formatında cevap ver:
           category: result.category || null
         });
         setUsedDates([...usedDates, chosenDate]);
+      } else {
+        throw new Error('API yanıtından JSON bulunamadı');
       }
     } catch (error) {
-      console.error('Error:', error);
-      // Fallback: pick random date
-      const randomIndex = Math.floor(Math.random() * availableDates.length);
-      const chosenDate = availableDates[randomIndex];
-      setSelectedDate(chosenDate);
-      setHistoricalEvent({
-        description: 'Bu tarihin güzel bir geleceği var!',
-        year: new Date().getFullYear()
-      });
-      setUsedDates([...usedDates, chosenDate]);
+      console.error('Hata:', error);
+      alert(`❌ Hata: ${error.message}`);
+    } finally {
+      setRandomDates([]);
+      setIsLoading(false);
     }
-    
-    setRandomDates([]);
-    setIsLoading(false);
   };
 
   const handleForgetDates = () => {
